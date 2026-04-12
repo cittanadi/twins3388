@@ -1590,19 +1590,14 @@ async function loadAndRenderArticles() {
   try {
     const ghArticles = await loadArticlesFromGH();
     if (ghArticles && ghArticles.length > 0) {
-      const hasDefault = ghArticles.find(a => a.id === 'art_default_001');
-      if (hasDefault) {
-        // GitHub has updated default — use GitHub version for all
-        articles = ghArticles.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      } else {
-        // GitHub has extra articles but not default — prepend built-in default
-        const extras = ghArticles.filter(a => a.id !== 'art_default_001');
-        extras.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-        articles = [DEFAULT_ARTICLE, ...extras];
-      }
+      const ghDefault = ghArticles.find(a => a.id === 'art_default_001');
+      const ghExtras  = ghArticles.filter(a => a.id !== 'art_default_001')
+                                  .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      // Default article always first (GitHub version if exists), then extras by date
+      const firstArticle = ghDefault || DEFAULT_ARTICLE;
+      articles = [firstArticle, ...ghExtras];
     }
   } catch(e) {
-    // GitHub fetch failed — show built-in default only
     console.log('GitHub fetch failed, showing default article');
   }
 
