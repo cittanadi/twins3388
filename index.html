@@ -1217,62 +1217,19 @@ function showMoreArticles() {
 }
 
 function renderArticleRow(a, i, list) {
-  if (i === 0) {
-    const card = document.createElement('div');
-    card.className = 'card-single user-post-card';
-    card.style.cursor = 'pointer';
-    card.innerHTML = `
-        <div class="card-text">
-          <span class="card-tag">${a.tag || ''}</span>
-          <h3 class="card-title">${a.title}</h3>
-          <p class="card-excerpt">${a.excerpt || ''}</p>
-          <div class="card-meta">${a.date || ''}</div>
-          <div class="card-read">閱讀全文 →</div>
-        </div>
-        <div class="card-visual">
-          <svg viewBox="0 0 220 220" fill="none" width="180" height="180">
-            <g class="m-outer" style="transform-origin:110px 110px">
-              <circle cx="110" cy="110" r="104" stroke="#b5a484" stroke-width=".5" opacity=".5"/>
-              <circle cx="110" cy="110" r="80"  stroke="#b5a484" stroke-width=".5" opacity=".4"/>
-              <circle cx="110" cy="110" r="58"  stroke="#7a6040" stroke-width=".8" opacity=".45"/>
-              <circle cx="110" cy="110" r="36"  stroke="#7a6040" stroke-width=".8" opacity=".5"/>
-              <circle cx="110" cy="110" r="16"  stroke="#7a6040" stroke-width="1"  opacity=".55"/>
-              <circle cx="110" cy="110" r="4"   fill="#7a6040" opacity=".65"/>
-              <ellipse cx="110" cy="69"  rx="6" ry="18" fill="#586645" opacity=".3"/>
-              <ellipse cx="110" cy="151" rx="6" ry="18" fill="#586645" opacity=".3"/>
-              <ellipse cx="69"  cy="110" rx="18" ry="6" fill="#586645" opacity=".3"/>
-              <ellipse cx="151" cy="110" rx="18" ry="6" fill="#586645" opacity=".3"/>
-            </g>
-            <g class="m-mid" style="transform-origin:110px 110px">
-              <circle cx="110" cy="6"   r="2" fill="#b5a484" opacity=".5"/>
-              <circle cx="214" cy="110" r="2" fill="#b5a484" opacity=".5"/>
-              <circle cx="110" cy="214" r="2" fill="#b5a484" opacity=".5"/>
-              <circle cx="6"   cy="110" r="2" fill="#b5a484" opacity=".5"/>
-            </g>
-            <text x="110" y="126" text-anchor="middle"
-              font-family="'Cormorant Garamond',serif" font-style="italic"
-              font-size="9" fill="#7a6040" opacity=".45" letter-spacing="1">cittanadī</text>
-          </svg>
-          <div class="card-sutra">atha yogānuśāsanam</div>
-        </div>
-      `;
-    card.onclick = () => openUserPanel(a);
-    list.appendChild(card);
-  } else {
-    const row = document.createElement('div');
-    row.className = 'post-row user-post-row';
-    row.innerHTML = `
-        <div class="post-row-date">${a.date || '—'}</div>
-        <div class="post-row-body">
-          <div class="post-row-tag">${a.tag || ''}</div>
-          <div class="post-row-title">${a.title}</div>
-          <div class="post-row-excerpt">${a.excerpt || ''}</div>
-        </div>
-        <div class="post-row-arrow">→</div>
-      `;
-    row.onclick = () => openUserPanel(a);
-    list.appendChild(row);
-  }
+  const row = document.createElement('div');
+  row.className = 'post-row user-post-row';
+  row.innerHTML = `
+    <div class="post-row-date">${a.date || '—'}</div>
+    <div class="post-row-body">
+      <div class="post-row-tag">${a.tag || ''}</div>
+      <div class="post-row-title">${a.title}</div>
+      <div class="post-row-excerpt">${a.excerpt || ''}</div>
+    </div>
+    <div class="post-row-arrow">→</div>
+  `;
+  row.onclick = () => openUserPanel(a);
+  list.appendChild(row);
 }
 
 // ── INDEX ──
@@ -1584,18 +1541,19 @@ const DEFAULT_ARTICLE = {
 };
 
 async function loadAndRenderArticles() {
-  // Always start with built-in default article as fallback
   let articles = [DEFAULT_ARTICLE];
 
   try {
     const ghArticles = await loadArticlesFromGH();
     if (ghArticles && ghArticles.length > 0) {
       const ghDefault = ghArticles.find(a => a.id === 'art_default_001');
-      const ghExtras  = ghArticles.filter(a => a.id !== 'art_default_001')
-                                  .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-      // Default article always first (GitHub version if exists), then extras by date
-      const firstArticle = ghDefault || DEFAULT_ARTICLE;
-      articles = [firstArticle, ...ghExtras];
+      const ghExtras  = ghArticles.filter(a => a.id !== 'art_default_001');
+      // All articles together, newest first — default article gets oldest timestamp so it sits last unless newer ones push it down
+      const allWithDefault = ghDefault
+        ? [...ghExtras, ghDefault]
+        : [...ghExtras, DEFAULT_ARTICLE];
+      // Sort newest first by createdAt
+      articles = allWithDefault.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     }
   } catch(e) {
     console.log('GitHub fetch failed, showing default article');
