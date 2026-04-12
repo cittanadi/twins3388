@@ -1205,6 +1205,8 @@ function renderUserArticles(articles) {
 
   renderIndex(_allArticles);
 }
+
+function showMoreArticles() {
   const list = document.getElementById('postList');
   const existing = list.querySelectorAll('.user-post-card').length;
   _allArticles.slice(existing, existing + 3).forEach((a, i) => renderArticleRow(a, existing + i, list));
