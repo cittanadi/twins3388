@@ -802,7 +802,14 @@ async function loadArticlesFromGH() {
     try { return JSON.parse(decodeURIComponent(escape(atob(file.content)))); }
     catch { return null; }
   }));
-  return articles.filter(Boolean).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return articles.filter(Boolean).sort((a, b) => artTime(b) - artTime(a));
+}
+
+// 取得文章時間：優先用 createdAt，缺少時從 id 內嵌的時間戳推算（修復舊資料）
+function artTime(a) {
+  if (a.createdAt) return a.createdAt;
+  const n = parseInt(String(a.id || '').replace(/\D/g, ''), 10);
+  return n || 0;
 }
 
 // Save article to GitHub
@@ -896,7 +903,63 @@ const CLOUDINARY_PRESET = 'cittanadi_unsigned'; // unsigned upload preset (set u
 let stagedImages  = [];
 let articleImages = {};
 
-function previewImage(input) {
+// 將圖片壓縮為最長邊 1600px 的 JPEG，避免手機原始照片過大導致上傳失敗
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 1600;
+      let { width, height } = img;
+      if (width > MAX || height > MAX) {
+        const scale = MAX / Math.max(width, height);
+        width  = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('壓縮失敗')), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('無法讀取圖片')); };
+    img.src = url;
+  });
+}
+
+// 主要：上傳到 Cloudinary
+async function uploadToCloudinary(blob, id) {
+  const formData = new FormData();
+  formData.append('file', blob);
+  formData.append('upload_preset', CLOUDINARY_PRESET);
+  formData.append('public_id', id);
+  const r = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method: 'POST', body: formData });
+  const data = await r.json();
+  if (!data.secure_url) throw new Error(data.error?.message || 'Cloudinary 拒絕上傳');
+  return data.secure_url;
+}
+
+// 備援：上傳到 GitHub 倉庫 images/ 資料夾（使用管理者已登入的 Token）
+async function uploadToGitHub(blob, id) {
+  if (!GH_TOKEN) GH_TOKEN = localStorage.getItem('gh_tok') || '';
+  if (!GH_TOKEN) throw new Error('缺少 GitHub Token');
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = () => reject(new Error('讀取失敗'));
+    reader.readAsDataURL(blob);
+  });
+  const path = `images/${id}.jpg`;
+  const r = await fetch(`${GH_API}/${path}`, {
+    method: 'PUT',
+    headers: { Authorization: `token ${GH_TOKEN}`, Accept: 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: `upload ${path}`, content: base64 })
+  });
+  if (!r.ok) throw new Error('GitHub 上傳失敗（' + r.status + '）');
+  return `https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/${path}`;
+}
+
+async function previewImage(input) {
   const file = input.files[0];
   if (!file) return;
   const ta = document.getElementById('a-body');
@@ -909,37 +972,32 @@ function previewImage(input) {
   area.style.display = 'block';
   const placeholder = document.createElement('div');
   placeholder.id = 'uploading_' + id;
-  placeholder.style.cssText = 'display:inline-block;width:90px;height:90px;border:1px solid var(--rule);background:var(--bg3);display:flex;align-items:center;justify-content:center;';
-  placeholder.innerHTML = `<span style="font-family:var(--sans);font-size:.6rem;color:var(--ink-mute);">上傳中…</span>`;
+  placeholder.style.cssText = 'display:inline-flex;width:90px;height:90px;border:1px solid var(--rule);background:var(--bg3);align-items:center;justify-content:center;text-align:center;padding:.2rem;';
+  placeholder.innerHTML = `<span style="font-family:var(--sans);font-size:.6rem;color:var(--ink-mute);">壓縮中…</span>`;
   list.appendChild(placeholder);
-
-  // Upload to Cloudinary
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', CLOUDINARY_PRESET);
-  formData.append('public_id', id);
-
-  fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, {
-    method: 'POST',
-    body: formData
-  })
-  .then(r => r.json())
-  .then(data => {
-    if (data.secure_url) {
-      stagedImages.push({ id, dataUrl: data.secure_url, cursorPos });
-      placeholder.remove();
-      renderStagedImages();
-    } else {
-      console.error('Cloudinary error:', data);
-      placeholder.innerHTML = `<span style="font-family:var(--sans);font-size:.6rem;color:red;">上傳失敗：${data.error?.message || '請確認 Cloudinary Preset 設定'}</span>`;
-    }
-  })
-  .catch(err => {
-    console.error('Upload error:', err);
-    placeholder.innerHTML = `<span style="font-family:var(--sans);font-size:.6rem;color:red;">上傳失敗：網路錯誤</span>`;
-  });
-
   input.value = '';
+
+  try {
+    const blob = await compressImage(file);
+    placeholder.querySelector('span').textContent = '上傳中…';
+
+    let url;
+    try {
+      url = await uploadToCloudinary(blob, id);
+    } catch (cloudErr) {
+      console.warn('Cloudinary 失敗，改用 GitHub：', cloudErr.message);
+      placeholder.querySelector('span').textContent = '改用備援上傳…';
+      url = await uploadToGitHub(blob, id);
+    }
+
+    stagedImages.push({ id, dataUrl: url, cursorPos });
+    placeholder.remove();
+    renderStagedImages();
+  } catch (err) {
+    console.error('Upload error:', err);
+    placeholder.innerHTML = `<span style="font-family:var(--sans);font-size:.6rem;color:red;">上傳失敗：${err.message}</span>`;
+    setTimeout(() => placeholder.remove(), 6000);
+  }
 }
 
 function renderStagedImages() {
@@ -1064,12 +1122,13 @@ async function saveArticle() {
   const btn = document.querySelector('[onclick="saveArticle()"]');
   if (btn) { btn.textContent = '儲 存 中 …'; btn.disabled = true; }
 
+  // 保留原始發布時間：編輯舊文章時，從文章 id 內嵌的時間戳還原 createdAt，
+  // 避免編輯後 createdAt 遺失、文章沉到最底
   const article = {
     id:        editId || ('art_' + Date.now()),
     title, tag, date, excerpt, rawBody,
-    createdAt: editId ? undefined : Date.now()
+    createdAt: editId ? (parseInt(editId.replace(/\D/g, ''), 10) || Date.now()) : Date.now()
   };
-  if (!editId) article.createdAt = Date.now();
 
   const ok = await saveArticleToGH(article);
 
@@ -1579,8 +1638,8 @@ async function loadAndRenderArticles() {
       const allWithDefault = ghDefault
         ? [...ghExtras, ghDefault]
         : [...ghExtras, DEFAULT_ARTICLE];
-      // Sort newest first by createdAt
-      articles = allWithDefault.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      // Sort newest first by createdAt（缺少 createdAt 時以 id 時間戳為準）
+      articles = allWithDefault.sort((a, b) => artTime(b) - artTime(a));
     }
   } catch(e) {
     console.log('GitHub fetch failed, showing default article');
