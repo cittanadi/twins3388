@@ -1086,8 +1086,11 @@ function buildBodyHtml(raw, imgMap) {
     .replace(/\[引言\]([\s\S]*?)\[\/引言\]/g, '<blockquote>$1</blockquote>')
     .replace(/\[梵文\]([\s\S]*?)\[\/梵文\]/g, '<span class="sa">$1</span>')
     .replace(/\[詩文框\]([\s\S]*?)\[\/詩文框\]/g, '<div class="opening-verse">$1</div>')
-    .replace(/\[照片:pic_\d+:(https?:\/\/[^\]]+)\]/g, (_, url) =>
-      `<div style="margin:1.5rem 0;"><img src="${url}" style="max-width:100%;border:1px solid var(--rule);border-radius:1px;display:block;"></div>`)
+    .replace(/\[照片:pic_\d+:(https?:\/\/[^\]]+)\]/g, (_, url) => {
+      // iPhone HEIC 格式瀏覽器無法顯示：Cloudinary 網址改成 .jpg 即自動轉檔
+      if (/res\.cloudinary\.com/.test(url)) url = url.replace(/\.heic(\?.*)?$/i, '.jpg$1');
+      return `<div style="margin:1.5rem 0;"><img src="${url}" style="max-width:100%;border:1px solid var(--rule);border-radius:1px;display:block;"></div>`;
+    })
     .replace(/\[照片:(pic_\d+)\]/g, (_, id) => {
       const src = imgMap[id] || '';
       return src ? `<div style="margin:1.5rem 0;"><img src="${src}" style="max-width:100%;border:1px solid var(--rule);border-radius:1px;display:block;"></div>` : '';
